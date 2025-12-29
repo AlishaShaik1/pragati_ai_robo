@@ -25,11 +25,28 @@ qa_pipeline = pipeline(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 people_file = os.path.join(BASE_DIR, "people_data.txt")
 
+PEOPLE_DICT = {} # {role_lower: name, name_lower: role}
+people_context = ""
+
 if os.path.exists(people_file):
     print(f"Loading people data from: {people_file}")
     with open(people_file, "r", encoding="utf-8") as f:
         # Use bullet points for clear separation
-        people_context = "\n".join([f"- {line.strip()}" for line in f.readlines() if line.strip()])
+        lines = f.readlines()
+        people_context = "\n".join([f"- {line.strip()}" for line in lines if line.strip()])
+        
+        # Build Fast Lookup Dict
+        for line in lines:
+             if ":" in line:
+                 parts = line.split(":", 1)
+                 role = parts[0].strip()
+                 name = parts[1].strip()
+                 PEOPLE_DICT[role.lower()] = name
+                 PEOPLE_DICT[name.lower()] = role
+                 
+                 if "dr." in name.lower():
+                     clean_name = name.lower().replace("dr.", "").strip()
+                     PEOPLE_DICT[clean_name] = role
 else:
     people_context = "People data not found."
     print(f"Warning: people_data.txt not found at {people_file}")
@@ -114,9 +131,10 @@ init_placement_data()
 
 
 GLOBAL_BRANCH_COUNTS = {}
+TOTAL_INTAKE = 0
 
 def load_admission_data():
-    global GLOBAL_BRANCH_COUNTS
+    global GLOBAL_BRANCH_COUNTS, TOTAL_INTAKE
     # 1. Try Loading Excel (Clean Format)
     excel_files = glob.glob(os.path.join(BASE_DIR, "*.xlsx"))
     if excel_files:
@@ -127,11 +145,13 @@ def load_admission_data():
             if 'Branch' in df.columns and 'Intake' in df.columns:
                 df.columns = df.columns.str.strip()
                 admission_list = []
+                TOTAL_INTAKE = 0
                 for _, row in df.iterrows():
                     branch = str(row['Branch']).upper()
                     intake = row['Intake']
                     admission_list.append(f"- Branch {branch} has an intake of {intake} students.")
                     GLOBAL_BRANCH_COUNTS[branch] = intake # Populate global dict
+                    TOTAL_INTAKE += intake
                 return "\n".join(admission_list)
         except Exception as e:
             print(f"Error reading Excel: {e}")
@@ -171,13 +191,17 @@ def load_admission_data():
                     "ECE": ["ELECTRONICS"],
                     "EEE": ["ELECTRICAL"],
                     "CIV": ["CIVIL"],
-                    "CSE": ["COMPUTER SCIENCE"]
+                    "CSE": ["COMPUTER SCIENCE", "CSE"],
+                    "INF": ["IT", "INFORMATION TECHNOLOGY"] # Added INF mapping for IT
                 }
                 
                 admission_list = []
+                TOTAL_INTAKE = 0
                 for branch, count in branch_counts.items():
                     # Populate global dict for direct lookup
                     GLOBAL_BRANCH_COUNTS[branch] = count
+                    TOTAL_INTAKE += count
+                    
                     for alias in aliases.get(branch, []):
                         GLOBAL_BRANCH_COUNTS[alias.upper()] = count
 
@@ -433,11 +457,11 @@ def predict_eligibility(message):
         aliases = {
             "CAI": ["aiml", "ai&ml", "cse(aiml)"],
             "CSM": ["csm", "cse(ai&ml)"],
-            "MEC": ["mec", "mech", "mechanical"],
+            "MEC": ["mec", "mech", "mechanical", "mac", "mechanal"], # Added 'mac' (common STT error)
             "ECE": ["ece", "electronics"],
-            "EEE": ["eee", "electrical", "electrical engineering"],
+            "EEE": ["eee", "electrical", "electrical engineering", "triple e"],
             "CIV": ["civil", "civil engineering"],
-            "CSE": ["cse", "computer science", "cse core"],
+            "CSE": ["cse", "computer science", "cse core", "computer"],
             "INF": ["it", "information technology", "cse(it)"],
             "CSD": ["ds", "data science", "cse(ds)"],
             "CSC": ["cs", "cyber security", "cse(cs)"]
@@ -445,13 +469,31 @@ def predict_eligibility(message):
         
         for code, keywords in aliases.items():
             for kw in keywords:
-                if kw in msg:
+                # Use word boundary or simple contain check for robustness?
+                # Simple contain is safer for short STT fragments like "mac"
+                # But "it" needs boundary.
+                if kw == "it":
+                     if re.search(r"\b" + re.escape(kw) + r"\b", msg):
+                         branch = code
+                         break
+                elif kw in msg:
                     branch = code
                     break
             if branch: break
             
-        if not (rank > 0 and gender and category and branch):
-            return "Please provide Rank, Gender, Category, and Branch to predict eligibility."
+        # Construct specific feedback if missing details
+        missing = []
+        if rank <= 0: missing.append("Rank")
+        if not gender: missing.append("Gender")
+        if not category: missing.append("Category")
+        if not branch: missing.append("Branch")
+        
+        if missing:
+            # If "rank" was mentioned but details are missing, we give specific help
+            if len(missing) < 4:
+                return f"I missed the following details: {', '.join(missing)}. Please say them clearly. Example: 'Rank 30000 Category OC Gender Male Branch CSE'."
+            else:
+                 return "Please provide Rank, Gender, Category, and Branch to predict eligibility."
 
         # Lookup Cutoff
         key = (branch, gender, category)
@@ -466,11 +508,11 @@ def predict_eligibility(message):
         if cutoff_rank:
             result_msg += f"- 2023 Cutoff Rank: {cutoff_rank}\n"
             if rank <= cutoff_rank:
-                result_msg += f"✅ **Yes, you have a high chance!** (Within last year's cutoff)"
+                result_msg += f"Yes, you have a high chance! Your rank is within the last year's cutoff."
             else:
-                result_msg += f"❌ **Diffcult.** Your rank is higher than last year's cutoff ({cutoff_rank})."
+                result_msg += f"Difficult. Your rank is higher than the last year's cutoff ({cutoff_rank})."
         else:
-            result_msg += f"⚠️ No data found for this exact combination ({branch}, {gender}, {category}) in 2023 records."
+            result_msg += f"No data found for this exact combination ({branch}, {gender}, {category}) in 2023 records."
             
         return result_msg
 
@@ -625,6 +667,21 @@ def respond(message, history):
     # 1. Correct Typos
     corrected_message = correct_typos(message)
 
+    # 2. Fast Authority Lookup (Optimization for Speed)
+    lower_msg = corrected_message.lower()
+    for role, name in PEOPLE_DICT.items():
+        # Role Lookup (e.g. "Who is Principal")
+        if role in lower_msg:
+             if f"who is {role}" in lower_msg or f"{role} name" in lower_msg or lower_msg == role or f"who is the {role}" in lower_msg:
+                 return f"The {role.title()} is {name}."
+        
+        # Name Lookup (e.g. "Who is G Naresh")
+        # Check if the name (or significant part of it) is in the message
+        clean_name = name.lower().replace("dr.", "").replace("sir", "").strip()
+        if clean_name in lower_msg or name.lower() in lower_msg:
+             if "who is" in lower_msg:
+                 return f"{name} is the {role.title()}."
+
     # 2. Check for Placement Queries
     # Added "placed" to catch "how many students placed"
     if "placement" in msg_lower or "package" in msg_lower or "salary" in msg_lower or "company" in msg_lower or "companies" in msg_lower or "highest" in msg_lower or "placed" in msg_lower:
@@ -636,23 +693,39 @@ def respond(message, history):
 
     # 2. Check for ML Prediction Query
     # Trigger keywords: "rank" AND ("branch" or "gender" or "category")
-    if "rank" in msg_lower and ("gender" in msg_lower or "category" in msg_lower or "branch" in msg_lower):
-        prediction = predict_eligibility(corrected_message)
-        if prediction:
-            return prediction
+    if "rank" in msg_lower:
+        if "gender" in msg_lower or "category" in msg_lower or "branch" in msg_lower:
+            prediction = predict_eligibility(corrected_message)
+            if prediction:
+                return prediction
+        # If we are here, it means "rank" was found but specific details were missing
+        # OR predict_eligibility failed.
+        return "To predict eligibility, please provide your Rank, Category, Gender, and Branch. For example: 'Rank 30000 Category OC Gender Male Branch CSE'."
 
     # 3. Direct Fallback for "Intake" queries (Determinstic)
     if "intake" in msg_lower or "how many" in msg_lower:
+        # NEW: Total Intake Handler
+        if "total" in msg_lower and "college" in msg_lower:
+             return f"The total intake of Pragati Engineering College is approximately {TOTAL_INTAKE} students."
+
         for branch, count in GLOBAL_BRANCH_COUNTS.items():
-            if branch.lower() in msg_lower:
-                return f"{count} students admitted/approved for {branch}."
+            # Improved matching: Check for whole word branch or simple string match
+            # Also handle the case where user says "intake of IT" (case insensitive)
+            
+            # Use boundary check for short keys (2-3 chars), substring for longer
+            if len(branch) <= 3:
+                 if re.search(r"\b" + re.escape(branch.lower()) + r"\b", msg_lower):
+                     return f"{count} students admitted/approved for {branch}."
+            else:
+                 if branch.lower() in msg_lower:
+                     return f"{count} students admitted/approved for {branch}."
 
     # 4. Help Command
     if "show questions" in msg_lower or "help" in msg_lower:
         help_text = "**Available Question Formats:**\n\n"
-        help_text += "🔹 **Principal/Personnel:**\n`Who is the Principal?`\n\n"
-        help_text += "🔹 **Admission Intake:**\n`What is the intake of CSE?`\n\n"
-        help_text += "🔹 **Eligibility Prediction:**\n`Rank 30000 Category OC Gender Male Branch CSE`"
+        help_text += "**Principal/Personnel:**\n`Who is the Principal?`\n\n"
+        help_text += "**Admission Intake:**\n`What is the intake of CSE?`\n\n"
+        help_text += "**Eligibility Prediction:**\n`Rank 30000 Category OC Gender Male Branch CSE`"
         return help_text
 
     # 4. Use LLM for everything else
@@ -666,7 +739,8 @@ Answer:
     result = qa_pipeline(
         prompt,
         max_length=200,
-        temperature=0.2 
+        temperature=0.2,
+        repetition_penalty=1.2 # Prevent looping like "Principal --- Principal"
     )
 
     result_text = result[0]["generated_text"]
