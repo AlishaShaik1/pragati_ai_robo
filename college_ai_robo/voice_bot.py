@@ -2,15 +2,19 @@ import speech_recognition as sr
 import pyttsx3
 import logging
 import time
+import sys
 
-# Import the response logic from your existing app
+# ==========================
+# IMPORT LOGIC
+# ==========================
 try:
-    from app import respond
-    print("Successfully imported logic from app.py")
-except ImportError as e:
-    print(f"Error importing app.py: {e}")
-    print("Make sure app.py is in the same directory.")
-    exit(1)
+    # Trying to import from ex.py as that corresponds to the current workspace file.
+    from ex import respond
+    print("Successfully imported logic from ex.py")
+except Exception as e:
+    print(f"Error importing ex.py: {e}")
+    print("Make sure ex.py is in the same directory and dependencies are correct.")
+    sys.exit(1)
 
 # ==========================
 # INITIALIZATION
@@ -19,10 +23,25 @@ except ImportError as e:
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = 3000
 
-# Removed global engine init to prevent state issues
+# Initialize Engine Globally (Pi-Safe)
+try:
+    engine = pyttsx3.init()
+    engine.setProperty('rate', 150)
+    engine.setProperty('volume', 1.0)
+    
+    # Optional: Set voice if available (Linux/Pi might not have 'zira')
+    voices = engine.getProperty('voices')
+    if voices:
+        for voice in voices:
+            if "female" in voice.name.lower() or "zira" in voice.name.lower():
+                engine.setProperty('voice', voice.id)
+                break
+except Exception as e:
+    print(f"Engine Initialization Warning: {e}")
 
 def clean_text_for_speech(text):
     """Remove markdown and special characters for better speech."""
+    if not text: return ""
     # Remove bold/italic markers
     text = text.replace("**", "").replace("__", "").replace("*", "")
     # Remove code blocks if any (simple approach)
@@ -30,28 +49,17 @@ def clean_text_for_speech(text):
     return text
 
 def speak(text):
-    """Convert text to speech."""
+    """Convert text to speech (Pi-Safe Version)."""
     try:
         clean_text = clean_text_for_speech(text)
         print(f"Robot: {text}") # Print original with formatting
-        
-        # Re-initialize engine each time to avoid 'runAndWait' hangs in loops
-        engine = pyttsx3.init()
-        
-        # Configure Voice
-        voices = engine.getProperty('voices')
-        for voice in voices:
-            if "female" in voice.name.lower() or "zira" in voice.name.lower():
-                engine.setProperty('voice', voice.id)
-                break
-        
-        engine.setProperty('rate', 150)
-        engine.setProperty('volume', 1.0)
-        
-        engine.say(clean_text)
-        engine.runAndWait()
-        engine.stop()
-        del engine # Clean up
+
+        if engine:
+            engine.say(clean_text)
+            engine.runAndWait()
+        else:
+            print("TTS Engine not initialized.")
+
     except Exception as e:
         print(f"TTS Error: {e}")
 
@@ -60,13 +68,12 @@ def listen_for_command():
     with sr.Microphone() as source:
         print("\nAdjusting for ambient noise... (Please wait)")
         recognizer.adjust_for_ambient_noise(source, duration=1)
-        # Increase pause threshold to allow for gaps in speech (default is 0.8)
+        # Increase pause threshold to allow for gaps in speech
         recognizer.pause_threshold = 1.2
-        print("Listening... (Say 'Bujji' to wake me up)")
+        print("Listening... (Say 'jarvis' to wake me up)")
         
         try:
             # Listen with a timeout to prevent hanging forever
-            # Increased phrase_time_limit to capture long prediction queries
             audio = recognizer.listen(source, timeout=None, phrase_time_limit=15)
             
             print("Recognizing...")
@@ -88,7 +95,7 @@ def listen_for_command():
             return None
 
 def main():
-    speak("Hello, I am ready. Say Bujji to start.")
+    speak("Hello, I am ready. Say jarvis to start.")
     
     listening = True
     while listening:
@@ -96,14 +103,12 @@ def main():
         
         if command:
             # Wake Word Detection
-            if "bujji" in command:
+            if "jarvis" in command:
                 # Remove the wake word to get the actual query
-                # Example: "Bujji who is the principal" -> "who is the principal"
-                query = command.replace("bujji", "").strip()
+                query = command.replace("jarvis", "").strip()
                 
                 if not query:
                     speak("Yes? How can I help you?")
-                    # Optional: Listen again immediately for the actual query
                     continue
 
                 if "exit" in query or "quit" in query or "stop" in query:
@@ -111,11 +116,14 @@ def main():
                     listening = False
                     break
                 
-                # Get Response from the AI Brain (app.py)
+                # Get Response from the AI Brain
                 try:
-                    # app.respond expects (message, history)
-                    # We pass empty history [] as this loop manages state simply for now
+                    # respond expects (message, history)
                     response_text = respond(query, [])
+                    
+                    # Fail-safe for None or empty response
+                    if not response_text:
+                        response_text = "I do not have that information."
                     
                     # Speak the response
                     speak(response_text)
