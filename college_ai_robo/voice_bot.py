@@ -8,12 +8,12 @@ import sys
 # IMPORT LOGIC
 # ==========================
 try:
-    # Trying to import from ex.py as that corresponds to the current workspace file.
-    from ex import respond
-    print("Successfully imported logic from ex.py")
+    # Trying to import from app.py
+    from app import respond
+    print("Successfully imported logic from app.py")
 except Exception as e:
-    print(f"Error importing ex.py: {e}")
-    print("Make sure ex.py is in the same directory and dependencies are correct.")
+    print(f"Error importing app.py: {e}")
+    print("Make sure app.py is in the same directory and dependencies are correct.")
     sys.exit(1)
 
 # ==========================
