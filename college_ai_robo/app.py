@@ -1,5 +1,5 @@
-import pandas as pd
-import gradio as gr
+import platform
+IS_PI = platform.machine().startswith(("arm", "aarch64"))
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
 
@@ -777,7 +777,7 @@ if __name__ == "__main__":
     
     gr.ChatInterface(
         respond,
-        title="AI College Robo 🤖",
+        title="AI College Robo ðŸ¤–",
         description="AI-powered college information system using Google FLAN-T5",
         examples=[
             "Show Questions / Help",
