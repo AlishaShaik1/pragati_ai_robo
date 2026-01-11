@@ -2,7 +2,7 @@ import platform
 IS_PI = platform.machine().startswith(("arm", "aarch64"))
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
-
+import gradio as gr
 # ==========================
 # MODEL (Google AI)
 # ==========================
