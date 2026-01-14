@@ -2,7 +2,7 @@ from app import init_placement_data, PLACEMENT_DF, query_placements
 from data_loader import load_placement_data
 import os
 
-print("--- Debugging AI Branch Issue ---")
+print("--- Debugging  AI Branch Issue ---")
 
 # 1. Load Data
 init_placement_data()
